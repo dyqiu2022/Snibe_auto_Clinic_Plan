@@ -1,0 +1,13 @@
+---
+name: ivd-chapter-13-deviations
+description: "生成第十三章：方案偏离与修正。纯模板，直接透传。"
+type: chapter
+chapter: "13"
+template: "templates/方案模板/13_临床试验方案的偏离与修正.md"
+complexity: simple
+requires: []
+produces: ["output/<name>/temp/13_临床试验方案的偏离与修正.md"]
+---
+# IVD Chapter 13 — 方案偏离与修正
+纯模板无占位符。直接透传。
+验证: `grep -c '【' output/<name>/temp/13_*.md` 必须为 0

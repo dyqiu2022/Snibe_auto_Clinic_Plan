@@ -1,0 +1,13 @@
+---
+name: ivd-chapter-11-ethics
+description: "生成第十一章：伦理问题与知情同意。纯模板，直接透传。"
+type: chapter
+chapter: "11"
+template: "templates/方案模板/11_临床试验的伦理问题以及知情同意.md"
+complexity: simple
+requires: []
+produces: ["output/<name>/temp/11_临床试验的伦理问题以及知情同意.md"]
+---
+# IVD Chapter 11 — 伦理问题与知情同意
+纯模板无占位符。直接透传。
+验证: `grep -c '【' output/<name>/temp/11_*.md` 必须为 0

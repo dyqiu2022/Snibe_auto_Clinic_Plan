@@ -1,0 +1,319 @@
+---
+name: ivd-master-orchestrator
+description: "主编排器：发现项目文件、调度全部 23 个章节 skill、最终拼装验证。用法：/ivd-master-orchestrator 项目名=<name>"
+type: orchestrator
+requires:
+  - "projects/<name>/项目信息.md"
+  - "templates/方案模板/"
+produces:
+  - "output/<name>/临床试验方案_<产品全称>.md"
+---
+
+# IVD 临床试验方案主编排器
+
+## 职责
+
+你是一个主编排器。你的任务是：发现项目文件夹中的所有输入文件 → 提取全局参数 → 按正确顺序调度每个章节的生成 → 拼装成完整方案 → 执行验证。
+
+## Phase 0：项目预检与参数提取
+
+### 0.1 定位项目文件夹
+
+用户需指定项目名。若未指定，列出 `projects/` 下的所有子目录，询问用户选哪个。
+
+```bash
+ls -d projects/*/
+```
+
+### 0.2 验证项目文件夹结构
+
+以下检查必须全部通过。任一项不通过则 HALT，告诉用户缺什么。
+
+| # | 检查项 | 检查方法 |
+|---|--------|---------|
+| HC-01 | `项目信息.md` 存在 | `ls projects/<name>/项目信息.md` |
+| HC-02 | `说明书/考核试剂/` 非空 | `ls projects/<name>/说明书/考核试剂/` 至少 1 个 .md |
+| HC-03 | `说明书/对比试剂/` 非空 | `ls projects/<name>/说明书/对比试剂/` 至少 1 个 .md |
+| HC-04 | `指导原则/` 非空 | `ls projects/<name>/指导原则/` 至少 1 个 .md |
+
+### 0.3 读取项目配置
+
+读取 `projects/<name>/项目信息.md`，提取以下全局变量：
+
+```
+__PROJECT_NAME__       = project.full_name        # 产品全称
+__PRODUCT_TYPE__       = project.product_type     # "定量" 或 "定性"
+__MANAGEMENT_CATEGORY__ = project.management_category  # "第二类" 或 "第三类"
+__PROTOCOL_NUMBER__    = project.protocol_number  # 方案编号
+__VERSION_DATE__       = project.version_date     # 版本日期
+```
+
+验证：
+- `__PRODUCT_TYPE__` 必须精确为 "定量" 或 "定性"，否则 HALT
+- `__MANAGEMENT_CATEGORY__` 必须为 "第二类" 或 "第三类"，否则 HALT
+
+### 0.4 读取所有外部输入文件
+
+按以下顺序完整读取项目文件夹内的所有输入文件：
+
+1. `说明书/考核试剂/` 下的**所有** .md 文件
+2. `说明书/对比试剂/` 下的**所有** .md 文件
+3. `指导原则/` 下的**所有** .md 文件
+4. `专家共识/` 下的所有 .md 文件（如果非空）
+5. `竞品信息/` 下的所有 .md 文件（如果非空）
+
+### 0.5 法规约束提取
+
+从 `指导原则/` 的所有文件中，逐文件提取"临床试验"相关章节中的**全部量化要求**，汇总为结构化约束表：
+
+```
+法规约束汇总
+============
+来源：[文件名]
+1. [条款原文/位置] → 量化指标：[具体数值] → 适用条件：[何时触发]
+```
+
+重点提取：
+- 临床试验机构数量要求
+- 样本量相关量化指标（阳性 ≥ X 例、阴性 ≥ Y 例、弱阳性 ≥ Z 例等）
+- 年龄段分层要求
+- 特殊样本类型要求（混合感染、交叉反应等）
+- 统计学方法要求
+- 可接受标准/判定依据
+
+### 0.6 输出预检摘要
+
+在开始撰写前，向用户显示以下摘要：
+
+```
+=== 项目预检通过 ===
+产品名称：__PROJECT_NAME__
+检测类型：__PRODUCT_TYPE__
+管理类别：__MANAGEMENT_CATEGORY__
+考核试剂数量：X 份
+对比试剂数量：X 份
+法规文件数量：X 份
+```
+
+---
+
+## Phase 1：并行生成简单章节
+
+以下章节**无互相依赖**，可任意顺序生成。每章生成后写入 `output/<name>/temp/<文件名>.md`。
+
+### 章节生成顺序清单
+
+按编号顺序依次生成每个章节。每个章节的生成指令详见对应的 `/ivd-chapter-XX-*` skill。
+
+**Phase 1 章节（无依赖，可并行）：**
+
+| # | Skill | 模板文件 | 备注 |
+|---|-------|---------|------|
+| 00 | `/ivd-chapter-00-cover` | `templates/方案模板/00_封面.md` | 封面，需项目信息 |
+| 00b | `/ivd-chapter-00b-revisions` | `templates/方案模板/00b_说明及历史修订版本.md` | 纯模板，无占位符 |
+| 01 | `/ivd-chapter-01-sponsor` | `templates/方案模板/01_申办者信息.md` | 公司信息固定 |
+| 02 | `/ivd-chapter-02-sites` | `templates/方案模板/02_临床试验机构和主要研究者信息.md` | 模板+少量占位符 |
+| 04 | `/ivd-chapter-04-objective` | `templates/方案模板/04_临床试验目的.md` | 填充产品全称 |
+| 07 | `/ivd-chapter-07-monitoring` | `templates/方案模板/07_监查计划.md` | 纯模板 |
+| 08 | `/ivd-chapter-08-data-mgmt` | `templates/方案模板/08_数据管理.md` | 纯模板 |
+| 09 | `/ivd-chapter-09-risk-benefit` | `templates/方案模板/09_风险受益分析.md` | 纯模板 |
+| 10 | `/ivd-chapter-10-quality` | `templates/方案模板/10_临床试验的质量控制.md` | 纯模板 |
+| 11 | `/ivd-chapter-11-ethics` | `templates/方案模板/11_临床试验的伦理问题以及知情同意.md` | 纯模板 |
+| 12 | `/ivd-chapter-12-adverse` | `templates/方案模板/12_对不良事件和器械缺陷报告的规定.md` | 保留公司联系方式 |
+| 13 | `/ivd-chapter-13-deviations` | `templates/方案模板/13_临床试验方案的偏离与修正.md` | 纯模板 |
+| 14 | `/ivd-chapter-14-source-data` | `templates/方案模板/14_关于同意直接访问源数据文件的说明.md` | 纯模板 |
+| 15 | `/ivd-chapter-15-report` | `templates/方案模板/15_临床试验报告应当涵盖的内容.md` | 纯模板 |
+| 16 | `/ivd-chapter-16-confidential` | `templates/方案模板/16_保密原则.md` | 纯模板 |
+| 17 | `/ivd-chapter-17-roles` | `templates/方案模板/17_各方承担的职责.md` | 纯模板 |
+| 18 | `/ivd-chapter-18-other` | `templates/方案模板/18_其他需要说明的内容.md` | 纯模板 |
+
+---
+
+## Phase 2-4：串行生成复杂章节
+
+以下章节**有依赖关系，必须按顺序生成**。每章产出是下一章的输入。
+
+### Phase 2：第三章 临床试验的背景资料
+
+Skill：`/ivd-chapter-03-background`
+
+本步骤需要：
+- `项目信息.md` → analyte / indication / competitor_products
+- `说明书/考核试剂/` → IFU 内容提取
+- `竞品信息/` → 竞品表格数据（若存在）
+- `指导原则/` → 预期用途的法规措辞
+
+产出：
+- `output/<name>/temp/03_临床试验的背景资料.md`
+- 全局变量：`__PRODUCT_FULL_NAME__`, `__ANALYTE_NAME__`
+
+### Phase 3：第五章 临床试验设计
+
+Skill：`/ivd-chapter-05-design`
+
+本步骤需要：
+- Phase 0 产出的法规约束
+- Phase 2 产出的 `__PRODUCT_FULL_NAME__`
+- `说明书/考核试剂/` 和 `说明书/对比试剂/` → 对比表
+- `__PRODUCT_TYPE__` → 决定保留哪些临床评价指标
+
+产出：
+- `output/<name>/temp/05_临床试验设计.md`
+- 全局变量：`__ACTIVE_EVALUATION_INDICATORS__`（7 项定量 / 2 项定性）
+
+### Phase 4：第六章 统计学考虑
+
+Skill：`/ivd-chapter-06-statistics`
+
+本步骤需要：
+- Phase 0 法规约束
+- Phase 3 产出的 `__ACTIVE_EVALUATION_INDICATORS__`
+- `项目信息.md` → performance / statistical / eqa
+- `__PRODUCT_TYPE__` → 决定哪套样本量公式
+
+产出：
+- `output/<name>/temp/06_统计学考虑.md`
+
+---
+
+## Phase 5：后置生成（缩略语 + 参考文献）
+
+### 缩略语（00c）
+
+Skill：`/ivd-chapter-00c-abbrev`
+
+扫描 Phase 1-4 所有已生成章节，收集文中出现的专业缩略语，生成缩略语表。
+
+### 参考文献（19）
+
+Skill：`/ivd-chapter-19-references`
+
+- 收集所有章节引用的法规、标准、文献
+- 添加项目特有的参考文献（来自 `项目信息.md` → `additional_references`）
+- 若 `__PRODUCT_TYPE__ == "定性"`，删除定量专有参考文献（EP09-A2、EP09-A3、Lu et al.）
+
+---
+
+## Phase 6：目录生成
+
+Skill：`/ivd-chapter-00d-toc`
+
+读取所有已完成章节的标题（#、##、###），自动生成带 markdown 锚点的目录。
+
+---
+
+## Phase 7：拼装与验证
+
+### 7.1 拼装
+
+将所有章节按编号顺序拼接为一个完整 .md 文件：
+
+```bash
+cat output/<name>/temp/00_封面.md \
+    output/<name>/temp/00b_说明及历史修订版本.md \
+    output/<name>/temp/00c_缩略语.md \
+    output/<name>/temp/00d_目录.md \
+    output/<name>/temp/01_申办者信息.md \
+    output/<name>/temp/02_临床试验机构和主要研究者信息.md \
+    output/<name>/temp/03_临床试验的背景资料.md \
+    output/<name>/temp/04_临床试验目的.md \
+    output/<name>/temp/05_临床试验设计.md \
+    output/<name>/temp/06_统计学考虑.md \
+    output/<name>/temp/07_监查计划.md \
+    output/<name>/temp/08_数据管理.md \
+    output/<name>/temp/09_风险受益分析.md \
+    output/<name>/temp/10_临床试验的质量控制.md \
+    output/<name>/temp/11_临床试验的伦理问题以及知情同意.md \
+    output/<name>/temp/12_对不良事件和器械缺陷报告的规定.md \
+    output/<name>/temp/13_临床试验方案的偏离与修正.md \
+    output/<name>/temp/14_关于同意直接访问源数据文件的说明.md \
+    output/<name>/temp/15_临床试验报告应当涵盖的内容.md \
+    output/<name>/temp/16_保密原则.md \
+    output/<name>/temp/17_各方承担的职责.md \
+    output/<name>/temp/18_其他需要说明的内容.md \
+    output/<name>/temp/19_参考文献与研究者声明.md \
+    > output/<name>/临床试验方案_<产品全称>.md
+```
+
+### 7.2 验证检查
+
+运行以下检查，每项必须通过。不通过则报告问题并 HALT。
+
+**V-01：占位符残留检查**
+```bash
+grep -Pn '【[^】]*】' output/<name>/临床试验方案_*.md
+```
+必须返回零结果。任何残留的 `【XXX_*】` 表示数据未解决。
+
+**V-02：章节完整性检查**
+- 方案文件必须包含全部 19 个一级章节（# 一、～ # 十九、）
+- 封面（00）和前置部分（00b/00c/00d）必须存在
+
+**V-03：产品名称一致性检查**
+- `00_封面` 中的产品全称 = `03_背景资料` 中的产品全称 = `05_试验设计` 对比表中的考核试剂名称
+
+**V-04：定性/定量内容完整性检查**
+
+若 `__PRODUCT_TYPE__ == "定性"`：
+```bash
+# 以下关键词必须全部不存在
+grep -iP 'Deming|Bland-Altman|Passing-Bablok|Pearson|Spearman|Kendall|离群值|偏差图|预期偏倚|相关系数|Fisher.*Z|EP09'
+```
+
+若 `__PRODUCT_TYPE__ == "定量"`：
+- 统计方法章节必须包含：符合率分析、Kappa、离群值检验、相关性分析、偏差图分析、回归分析、医学决定水平预期偏倚、Bland-Altman
+
+**V-05：法规约束交叉检查**
+- 逐条核对 Phase 0.5 提取的法规约束是否在方案对应章节中有对应段落落实
+- 法规约束表中每一条 → 映射到具体章节段落 → 标记落实状态
+- 未落实的条款生成报告，由用户决定是否忽略
+
+**V-06：数值自洽检查**
+- 第六章"样本量分配"中的机构数 ≥ 法规最低要求（第二类 ≥ 2、第三类 ≥ 3）
+- 最终样本数 ≥ 统计估算数（第六章正文中的计算值 vs 综合确定值必须一致）
+- 若有定量评价，综合样本量 = max(三种方法估算值)
+
+### 7.3 验证通过后
+
+```
+=== 方案生成完成 ===
+输出文件：output/<name>/临床试验方案_<产品全称>.md
+验证状态：V-01~V-06 全部通过 ✓
+```
+
+---
+
+## 数据流图
+
+```
+项目信息.md ──→ __PRODUCT_TYPE__, __MANAGEMENT_CATEGORY__, __PROJECT_NAME__
+     │
+说明书/考核试剂/ ──→ analyte_name, linear_range, LoB/LoD/LoQ, sample_types, ...
+     │
+说明书/对比试剂/ ──→ comparator specs for comparison table
+     │
+指导原则/ ──→ 法规约束汇总（min_sites, required_methods, acceptance_criteria）
+     │
+     └──→ [Phase 1: 并行生成简单章节]
+              │
+              ├──→ [Phase 2: Chapter 03 背景资料]
+              │         │
+              │         └──→ [Phase 3: Chapter 05 试验设计]
+              │                   │
+              │                   └──→ [Phase 4: Chapter 06 统计学]
+              │
+              ├──→ [Phase 5: 00c缩略语 + 19参考文献]
+              ├──→ [Phase 6: 00d目录]
+              └──→ [Phase 7: 拼装 + V-01~V-06 验证]
+```
+
+## 占位符解析规则（通用）
+
+对于模板中出现的 `【XXX_描述】` 占位符，按以下优先级解析：
+
+1. `项目信息.md` → 对应字段的值
+2. `说明书/考核试剂/` → LLM 从 IFU 文本中提取
+3. `说明书/对比试剂/` → LLM 从 IFU 文本中提取
+4. 计算 → 从已解析的其他值通过公式推导
+5. `指导原则/` → 从法规文件中提取
+6. 询问用户 → 以上都无法解决时，明确提问

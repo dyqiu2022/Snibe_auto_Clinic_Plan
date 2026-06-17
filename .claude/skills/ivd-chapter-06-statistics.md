@@ -1,0 +1,300 @@
+---
+name: ivd-chapter-06-statistics
+description: "生成第六章：统计学考虑。含样本量估算（定量3法/定性1法）、分析数据集、剔除标准、统计分析方法（定量10项/定性3项）、软件工具。"
+type: chapter
+chapter: "06"
+template: "templates/方案模板/06_统计学考虑.md"
+complexity: complex
+requires:
+  - "__PRODUCT_TYPE__"                # "定量" | "定性"
+  - "__MANAGEMENT_CATEGORY__"        # "第二类" | "第三类"
+  - "__PRODUCT_FULL_NAME__"          # 来自 skill-03
+  - "__ANALYTE_NAME__"               # 来自 skill-03
+  - "__ACTIVE_EVALUATION_INDICATORS__"  # 来自 skill-05
+  - "projects/<name>/项目信息.md"
+  - "projects/<name>/指导原则/"
+produces:
+  - "output/<name>/temp/06_统计学考虑.md"
+---
+
+# IVD Chapter 06 — 统计学考虑
+
+## 数据源
+
+| ID | 来源 | 提取字段 | 方法 |
+|----|------|---------|------|
+| DS-01 | `项目信息.md` → `project` | `management_category` 用于确定最低机构数 | 直接映射 |
+| DS-02 | `项目信息.md` → `performance` | 所有性能参数 | 直接映射 |
+| DS-03 | `项目信息.md` → `statistical` | `alpha`, `beta`, `power`（默认 0.05/0.20/0.80） | 直接映射+默认值 |
+| DS-04 | `项目信息.md` → `eqa` | `standard_name`, `acceptable_range_pct` | 直接映射 |
+| DS-05 | `项目信息.md` → `analyte` | `analyte_name` | 直接映射 |
+| DS-06 | `指导原则/` 下所有文件 | 机构数量要求、样本量量化指标 | Read + LLM 结构化提取 |
+| DS-07 | Chapter 05 输出 | `__ACTIVE_EVALUATION_INDICATORS__` | 读取 |
+
+## 计算规则
+
+### 工具调用
+
+1. `Read("templates/方案模板/06_统计学考虑.md")` → 加载模板
+2. `ls projects/<name>/指导原则/` → `Read` 全部
+3. `Read("projects/<name>/项目信息.md")` → 提取 performance, statistical, eqa, project
+4. 如 MCP 样本量计算工具可用，优先调用工具计算；否则 LLM 按公式直接计算
+
+---
+
+### ◇ 定性/定量闸门：样本量估算
+
+#### 定量产品（`__PRODUCT_TYPE__ == "定量"`）
+
+使用**三种**方法分别估算样本量：
+
+**方法(1)：基于相关系数的样本量估算**
+
+公式（Dixon & Massey）：
+
+$$n=\frac{(Z_{1-\alpha/2}+Z_{1-\beta})^{2}}{[FZ(\rho_{1})-FZ(\rho_{0})]^{2}}+3$$
+
+$$FZ(\rho)=\frac{1}{2}\ln\left(\frac{1+\rho}{1-\rho}\right)$$
+
+$$n'=\frac{n}{(1-f)}$$
+
+参数来源：
+- `ρ₁` = `performance.expected_correlation`（来自探索性试验/项目信息）
+- `ρ₀` = `performance.min_correlation`（EP09-A3 要求 ≥0.975；若项目信息未指定则默认 0.975）
+- `α` = `statistical.alpha`（默认 0.05）→ Z₁₋α/₂ = 1.96
+- `1-β` = `statistical.power`（默认 0.80）→ Z₁₋β = 0.8416
+- `f` = `performance.dropout_rate`（默认 0.05）
+
+计算步骤：
+1. 计算 Fisher's Z 变换：FZ(ρ₁) 和 FZ(ρ₀)
+2. 代入公式得 n
+3. 调整脱落率：n' = ceil(n / (1-f))
+4. 输出：统计估算 n 例 → 预计入组 n' 例
+
+**方法(2)：基于 Bland-Altman 一致性分析的样本量估算**
+
+采用 Lu et al. 方法，5 参数输入：
+- `α` = `statistical.alpha`（默认 0.05）
+- `β` = `statistical.beta`（默认 0.20）
+- `μ` = `performance.bias_mean`（预期偏倚均值，%）
+- `σ` = `performance.bias_sd`（预期偏倚标准差，%）
+- `δ` = `performance.acceptable_bias_pct`（临床可接受的最大偏倚，%）
+
+优先用 MCP 工具或 MedCalc 计算；若不可用则 LLM 按 Lu et al. 公式计算。
+输出：统计估算 n 例 → 预计入组 n' 例。
+
+**方法(3)：基于阳性符合率和阴性符合率的样本量估算**
+
+单组目标值法公式：
+
+$$n=\frac{\left[Z_{1-\alpha/2}\sqrt{P_{0}(1-P_{0})}+Z_{1-\beta}\sqrt{P_{T}(1-P_{T})}\right]^{2}}{(P_{T}-P_{0})^{2}}$$
+
+参数来源：
+- `P₀(阳性)` = `performance.pos_agreement_target`
+- `P_T(阳性)` = `performance.pos_agreement_expected`
+- `P₀(阴性)` = `performance.neg_agreement_target`
+- `P_T(阴性)` = `performance.neg_agreement_expected`
+- `α` = 0.05 → Z₁₋α/₂ = 1.96
+- `β` = 0.20 → Z₁₋β = 1.84
+
+分别计算阳性组 n_pos 和阴性组 n_neg，总 n = n_pos + n_neg。
+输出：阳性组 ≥ n_pos 例、阴性组 ≥ n_neg 例、预计总入组 = ceil(n/(1-f)) 例。
+
+**综合确定（定量产品）：**
+
+取三种方法估算结果的最大值：
+```
+最终阳性数 = max(方法1阳性, 方法2不区分阴阳性, 方法3阳性)
+最终阴性数 = max(方法1阴性, 方法2不区分阴阳性, 方法3阴性)
+最终总数 = ceil((最终阳性数 + 最终阴性数) / (1 - f))
+```
+
+同时对照法规约束（Phase 0.5 提取的量化要求），若法规要求高于统计估算值，取法规值。
+
+最终在"综合考虑"段落明确写出"统计估算值 vs 法规最低值 → 取最大值"的逻辑链。
+
+---
+
+#### 定性产品（`__PRODUCT_TYPE__ == "定性"`）
+
+**仅使用方法(3)**，删除方法(1)和方法(2)。
+
+样本量即为方法(3)的结果。若法规有额外最低要求，取 max。
+
+定性产品在方法(3)段落后新增声明：
+> 本产品为定性检测试剂，故仅采用定性评价指标的样本量估算方法。
+
+"综合考虑"段落改为：
+> 基于定性评价指标的样本量估算结果，本临床试验预计入组 X 例样本……
+
+---
+
+### 样本量分配
+
+确定临床试验机构数量：
+
+1. 从 `指导原则/` 提取机构数量要求
+2. 第二类产品 → ≥ 2 家（含 2 家）
+3. 第三类产品 → ≥ 3 家（含 3 家）
+4. 填入 `【XXX_管理类别】` = `__MANAGEMENT_CATEGORY__`
+5. 填入 `【XXX_最低机构数】` = 2 或 3
+
+引用法规原文措辞（2021年第72号 + 2024年第58号）。
+
+---
+
+### ◇ 定性/定量闸门：统计分析方法
+
+#### 定量产品
+
+保留全部 10 个子节：
+
+| # | 子节 | 关键计算/内容 |
+|---|------|-------------|
+| 1 | 符合率分析 | Wilson 得分区间法，四格表 |
+| 2 | Kappa一致性分析 | R vcd 包，Kappa + 95%CI |
+| 3 | 不一致结果分析方法 | 列表呈现不一致样本 |
+| 4 | 离群值检验 | 绝对差值法：E=|y-x|, TL=4×mean(E)；相对差值法 |
+| 5 | 相关性分析 | Pearson r + Kendall τ；或 Spearman rs + Kendall τ |
+| 6 | 偏差图分析 | 数值偏差图 + 排序偏差图；确定 SD/CV/混合变异 |
+| 7 | 回归分析 | Deming(恒定SD) / CV Deming(恒定CV) / Passing-Bablok(混合) |
+| 8 | 医学决定水平预期偏倚 | Jackknife CI(Deming) 或 Bootstrap CI(Passing-Bablok) |
+| 9 | Bland-Altman一致性分析 | 95% LoAs，与临床可接受限值比较 |
+| 10 | 统计学软件 | Excel, MedCalc, IVDstatistics, R |
+
+#### 定性产品
+
+**删除**子节 4-9。仅保留：
+
+| # | 子节 | 关键计算/内容 |
+|---|------|-------------|
+| 1 | 符合率分析 | Wilson 得分区间法，四格表 |
+| 2 | Kappa一致性分析 | R vcd 包，Kappa + 95%CI |
+| 3 | 不一致结果分析方法 | 列表呈现不一致样本 |
+| 4 | 统计学软件 | R |
+
+定性产品在统计分析方法节开头新增声明：
+> 本产品为定性检测试剂，统计分析仅包括符合率分析、Kappa一致性检验和不一致结果分析。定量统计分析（离群值检验、相关性分析、偏差图分析、回归分析、医学决定水平预期偏倚、Bland-Altman分析）均不适用。
+
+---
+
+### 占位符解析映射
+
+| 占位符 | 来源 | 方法 |
+|--------|------|------|
+| `【XXX_预期相关系数】` | `performance.expected_correlation` | 直接（定量） |
+| `【XXX_最低相关系数要求】` | `performance.min_correlation` 或 EP09-A3 默认 0.975 | 直接+默认（定量） |
+| `【XXX_检验水准】` | `statistical.alpha` 默认 0.05 | 直接+默认 |
+| `【XXX_检验效能】` | `statistical.power` 默认 0.80 | 直接+默认 |
+| `【XXX_Ⅱ类错误概率】` | `statistical.beta` 默认 0.20 | 直接+默认 |
+| `【XXX_脱落剔除率】` | `performance.dropout_rate` 默认 0.05 | 直接+默认 |
+| `【XXX_相关系数最低样本量】` | 方法(1) 计算结果 n | 计算 |
+| `【XXX_相关系数预计入组数】` | 方法(1) 计算结果 n' | 计算 |
+| `【XXX_BA最低样本量】` | 方法(2) 计算结果 n | 计算（定量） |
+| `【XXX_BA预计入组数】` | 方法(2) 计算结果 n' | 计算（定量） |
+| `【XXX_室间质评标准依据】` | `eqa.standard_name` | 直接 |
+| `【XXX_可接受偏差百分比】` | `eqa.acceptable_range_pct` | 直接 |
+| `【XXX_预期偏倚均值】` | `performance.bias_mean` | 直接（定量） |
+| `【XXX_预期偏倚标准差】` | `performance.bias_sd` | 直接（定量） |
+| `【XXX_符合率目标值】` | `performance.pos_agreement_target` / `neg_agreement_target` | 直接 |
+| `【XXX_阳性符合率预期值】` | `performance.pos_agreement_expected` | 直接 |
+| `【XXX_阴性符合率预期值】` | `performance.neg_agreement_expected` | 直接 |
+| `【XXX_阳性组最低样本量】` | 方法(3) n_pos | 计算 |
+| `【XXX_阴性组最低样本量】` | 方法(3) n_neg | 计算 |
+| `【XXX_定性总最低样本量】` | 方法(3) n_pos + n_neg | 计算 |
+| `【XXX_定性预计入组数】` | (n_pos+n_neg)/(1-f) | 计算 |
+| `【XXX_综合预计入组数】` | max(三法结果)/(1-f) (定量)；= 定性预计入组数 (定性) | 计算 |
+| `【XXX_综合阳性样本量】` | max(三法阳性) (定量)；= 阳性组最低样本量 (定性) | 计算 |
+| `【XXX_综合阴性样本量】` | max(三法阴性) (定量)；= 阴性组最低样本量 (定性) | 计算 |
+| `【XXX_管理类别】` | `__MANAGEMENT_CATEGORY__` | 直接 |
+| `【XXX_最低机构数】` | 第二类→2, 第三类→3 | 法规查表 |
+| `【XXX_被测物名称】` | `__ANALYTE_NAME__` | 直接 |
+| `【XXX_产品全称】` | `__PRODUCT_FULL_NAME__` | 直接 |
+
+## 隐性规则
+
+### IR-06-01: 样本量向上取整
+
+所有计算出的样本量一律 ceil() 向上取整，不得出现小数。
+
+### IR-06-02: 法规 > 统计
+
+当法规明确要求的最低样本量 > 统计公式估算值时，以法规要求为准。必须在正文中明确展示"统计估算 X 例 < 法规最低 Y 例 → 最终确定为 Y 例"的逻辑。
+
+### IR-06-03: Z 值精度
+
+- Z₁₋α/₂ (α=0.05, two-sided) = 1.96 精确
+- Z₁₋β (β=0.20) = 0.8416（保留 4 位小数）
+
+### IR-06-04: EQA 标准年份
+
+若法规文件夹中有比 `eqa.standard_name` 更新年份的 EQA 标准，使用更新版本。从文件名/内容中提取年份。
+
+### IR-06-05: 分析数据集 + 剔除标准 + 统计软件
+
+这三个子节（(二)(三)(四)中非量化部分）是通用模板内容。保持原样，不要修改。
+
+## 删除清单（仅定性产品）
+
+| 节 | 内容 | 操作 |
+|----|------|------|
+| (一).1.(1) | 基于相关系数的样本量估算 | DELETE 整个子节 |
+| (一).1.(2) | 基于Bland-Altman一致性分析的样本量估算 | DELETE 整个子节 |
+| (一).1 综合段 | "综合考虑基于定量评价指标和定性评价指标" | 改为"基于定性评价指标" |
+| (四).4 | 离群值检验 | DELETE |
+| (四).5 | 相关性分析 | DELETE |
+| (四).6 | 偏差图分析 | DELETE |
+| (四).7 | 回归分析 | DELETE |
+| (四).8 | 医学决定水平处的预期偏倚分析 | DELETE |
+| (四).9 | Bland-Altman一致性分析（两段） | DELETE |
+| (四).10 | 统计学软件 → 移除 MedCalc 和 IVDstatistics | MODIFY |
+
+## 新增清单（仅定性产品）
+
+| 位置 | 内容 |
+|------|------|
+| (一).1.(1) 后 | "本产品为定性检测试剂，故仅采用定性评价指标的样本量估算方法。" |
+| (四) 开头 | "本产品为定性检测试剂，统计分析仅包括符合率分析、Kappa一致性检验和不一致结果分析。定量统计分析均不适用。" |
+
+## 验证检查项
+
+### V-06-01: 样本量合理性
+```
+若 定量: 总样本量 ≥ 80 且 ≤ 2000
+若 定性: 总样本量 ≥ 200 且 ≤ 5000
+超出范围 WARN
+```
+
+### V-06-02: 统计方法数量
+```
+若 定量: 10 个子节
+若 定性: 3 个子节（符合率 + Kappa + 不一致）+ 统计学软件
+```
+
+### V-06-03: 机构数量 vs 法规
+```
+__MANAGEMENT_CATEGORY__ == "第二类" → min_sites ≥ 2
+__MANAGEMENT_CATEGORY__ == "第三类" → min_sites ≥ 3
+```
+
+### V-06-04: 定性禁忌词（若定性）
+```bash
+grep -iP 'Deming|Bland-Altman|Pearson|Spearman|Passing-Bablok|离群值|偏差图|预期偏倚|相关系数|Fisher.*Z|EP09'
+```
+必须为零。
+
+### V-06-05: 逻辑链完整性
+- 每个计算参数的来源在正文中有明确说明
+- "综合确定"段落的最终值 ≥ 各方法分别的估算值
+- "综合确定"段落的最终值 ≥ 法规最低值
+- 脱落率调整已经体现在总入组数中
+
+### V-06-06: 占位符清零
+```bash
+grep -c '【' output/<name>/temp/06_*.md   # 必须为 0
+```
+
+## 产出
+
+写入 `output/<name>/temp/06_统计学考虑.md`，不含任何残留占位符。
+所有数值必须是确定值，不得有 `XXX` 或 `【XXX_*】` 残留。

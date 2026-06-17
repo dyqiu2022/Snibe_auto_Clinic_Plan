@@ -1,0 +1,13 @@
+---
+name: ivd-chapter-10-quality
+description: "生成第十章：临床试验的质量控制。纯模板，直接透传。"
+type: chapter
+chapter: "10"
+template: "templates/方案模板/10_临床试验的质量控制.md"
+complexity: simple
+requires: []
+produces: ["output/<name>/temp/10_临床试验的质量控制.md"]
+---
+# IVD Chapter 10 — 临床试验的质量控制
+纯模板无占位符。直接透传。
+验证: `grep -c '【' output/<name>/temp/10_*.md` 必须为 0

@@ -1,0 +1,20 @@
+---
+name: ivd-chapter-00b-revisions
+description: "生成说明及历史修订版本。纯模板无占位符，直接透传。"
+type: chapter
+chapter: "00b"
+template: "templates/方案模板/00b_说明及历史修订版本.md"
+complexity: simple
+requires: []
+produces:
+  - "output/<name>/temp/00b_说明及历史修订版本.md"
+---
+
+# IVD Chapter 00b — 说明及历史修订版本
+
+纯模板，无占位符。直接读取模板内容作为输出。
+
+## 验证
+```bash
+grep -c '【' output/<name>/temp/00b_*.md   # 必须为 0
+```

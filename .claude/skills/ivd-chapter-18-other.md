@@ -1,0 +1,13 @@
+---
+name: ivd-chapter-18-other
+description: "生成第十八章：其他需要说明的内容。纯模板，直接透传。"
+type: chapter
+chapter: "18"
+template: "templates/方案模板/18_其他需要说明的内容.md"
+complexity: simple
+requires: []
+produces: ["output/<name>/temp/18_其他需要说明的内容.md"]
+---
+# IVD Chapter 18 — 其他需要说明的内容
+纯模板无占位符。直接透传。
+验证: `grep -c '【' output/<name>/temp/18_*.md` 必须为 0

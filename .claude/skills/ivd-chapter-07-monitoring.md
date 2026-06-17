@@ -1,0 +1,13 @@
+---
+name: ivd-chapter-07-monitoring
+description: "生成第七章：监查计划。纯模板，直接透传。"
+type: chapter
+chapter: "07"
+template: "templates/方案模板/07_监查计划.md"
+complexity: simple
+requires: []
+produces: ["output/<name>/temp/07_监查计划.md"]
+---
+# IVD Chapter 07 — 监查计划
+纯模板无占位符。直接透传。
+验证: `grep -c '【' output/<name>/temp/07_*.md` 必须为 0
