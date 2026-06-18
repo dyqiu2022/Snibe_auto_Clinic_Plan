@@ -19,7 +19,7 @@ if [ -d "$PROJECT_DIR" ]; then
 fi
 
 # 创建标准目录结构
-mkdir -p "$PROJECT_DIR"/{说明书/考核试剂,说明书/对比试剂,指导原则,专家共识,竞品信息,审评报告}
+mkdir -p "$PROJECT_DIR"/{说明书/考核试剂,说明书/对比试剂,指导原则,专家共识,竞品信息,审评报告,补充资料/文献调研,补充资料/LIS数据分析}
 
 # 拷贝项目信息模板
 if [ -f "$ROOT/templates/项目信息.md.template" ]; then
@@ -37,4 +37,5 @@ echo "  1. 把考核试剂 IFU(.md) 放入 说明书/考核试剂/"
 echo "  2. 把对比试剂 IFU(.md) 放入 说明书/对比试剂/"
 echo "  3. 把相关指导原则(.md) 放入 指导原则/"
 echo "  4. (可选) 专家共识/竞品信息/审评报告 各放入对应目录"
-echo "  5. 运行: /ivd-00-orchestrator 项目名=$PROJECT_NAME"
+echo "  5. (可选) 文献调研放入 补充资料/文献调研/，医院LIS数据分析放入 补充资料/LIS数据分析/"
+echo "  6. 运行: /ivd-00-orchestrator 项目名=$PROJECT_NAME"
