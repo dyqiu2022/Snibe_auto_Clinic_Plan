@@ -37,27 +37,46 @@ projects/<项目名>/
 
 ### 如何使用
 
-1. 在 `projects/<项目名>/` 下放入输入文件：
-   - `说明书/考核试剂/` — 考核试剂 IFU（.md 格式）
-   - `说明书/对比试剂/` — 对比试剂 IFU（.md 格式）
-   - `指导原则/` — 相关 NMPA 注册技术审查指导原则（.md 格式）
-   - `专家共识/` 和 `竞品信息/` — 可选，有则放入
-2. 输入：`/ivd-00-orchestrator 项目名=<name>`
-3. 主编排器自动完成：
-   - 读取所有输入文件 → **自动生成 `项目信息.md`**
-   - 对无法推断的字段（方案编号、版本日期、产品定性/定量类型等）向用户确认
+**新建项目（一键脚手架）：**
+
+```bash
+bash scripts/init_project.sh <项目名>
+# 自动创建 projects/<项目名>/ 下 6 个标准子目录 + 项目信息.md 模板
+```
+
+然后把输入文件放入对应子目录：
+- `说明书/考核试剂/` — 考核试剂 IFU（.md 格式）【必填】
+- `说明书/对比试剂/` — 对比试剂 IFU（.md 格式）【必填】
+- `指导原则/` — 相关 NMPA 注册技术审查指导原则（.md 格式）【必填】
+- `专家共识/` — 诊疗指南、专家共识（可选）
+- `竞品信息/` — 竞品调研资料（可选）
+- `审评报告/` — CMDE 同品种技术审评报告（可选）
+
+**生成方案：**
+
+1. 输入：`/ivd-00-orchestrator 项目名=<name>`
+2. 主编排器自动完成：
+   - Phase 0：调用 4 个预处理 skill（00a 指导原则 / 00b 说明书 / 00c 专家共识 / 00d 审评报告）→ 自动生成 `项目信息.md`
+   - 对无法推断的字段（方案编号、版本日期、定性/定量类型、P₀/P_T 等）向用户确认
    - 调度全部 23 个 chapter skill 逐章撰写
    - 最终拼装验证，输出到 `output/<项目名>/临床试验方案_<产品全称>.md`
-4. 用户也可以单独调用某一章：`/ivd-10-statistics` 只生成第六章
+3. 也可单独调用某一章：`/ivd-10-statistics` 只生成第六章
 
 ### MCP 工具
 
-项目内置一个样本量计算 MCP Server（`mcp/sample_size_server.py`），通过项目级 `.mcp.json` 自动加载：
+项目内置样本量计算 MCP Server（`mcp/sample_size_server.py`），通过项目级 `.mcp.json` 自动加载：
 
 - **首次使用**：运行 `bash scripts/setup.sh`（安装 uv + 预拉依赖），详见 `mcp/README.md`
 - 从 GitHub 克隆后无需手动配置，uv run 自动建环境
-- 提供 4 个工具：`calc_correlation_sample_size`、`calc_bland_altman_sample_size`、`calc_agreement_sample_size`、`validate_sample_size_logic`
+- **覆盖范围**：仅样本量计算（方案撰写阶段唯一需要确定性计算的环节）
+  - `calc_correlation_sample_size` — 相关系数法（定量）
+  - `calc_bland_altman_sample_size` — Bland-Altman 法（定量）
+  - `calc_agreement_sample_size` — 符合率法（定性/定量）
+  - `validate_sample_size_logic` — 样本量逻辑链验证
 - 第六章样本量计算必须优先调用这些工具，确保结果确定性
+
+> **说明**：方案阶段不封装 Wilson 置信区间/Kappa/卡方等统计计算 MCP——这些需要临床试验四格表数据，属于**临床试验报告撰写**阶段（另一项目范畴），方案阶段只写方法名、不算数值。
+
 
 ---
 
