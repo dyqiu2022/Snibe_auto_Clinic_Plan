@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ivd-sample-size": {
+      "command": "uv",
+      "args": ["run", "--python", "3.12", "${CLAUDE_PROJECT_DIR}/mcp/sample_size_server.py"]
+    }
+  }
+}

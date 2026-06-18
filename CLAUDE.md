@@ -50,6 +50,15 @@ projects/<项目名>/
    - 最终拼装验证，输出到 `output/<项目名>/临床试验方案_<产品全称>.md`
 4. 用户也可以单独调用某一章：`/ivd-10-statistics` 只生成第六章
 
+### MCP 工具
+
+项目内置一个样本量计算 MCP Server（`mcp/sample_size_server.py`），通过项目级 `.mcp.json` 自动加载：
+
+- **首次使用**：运行 `bash scripts/setup.sh`（安装 uv + 预拉依赖），详见 `mcp/README.md`
+- 从 GitHub 克隆后无需手动配置，uv run 自动建环境
+- 提供 4 个工具：`calc_correlation_sample_size`、`calc_bland_altman_sample_size`、`calc_agreement_sample_size`、`validate_sample_size_logic`
+- 第六章样本量计算必须优先调用这些工具，确保结果确定性
+
 ---
 
 ## 定性/定量适配规则

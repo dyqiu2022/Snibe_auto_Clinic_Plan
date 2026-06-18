@@ -1,2 +1,8 @@
 output/
 .claude/sessions/
+
+# uv / Python 缓存（不入库，克隆后自动重建）
+.venv/
+__pycache__/
+*.pyc
+.uv-cache/
