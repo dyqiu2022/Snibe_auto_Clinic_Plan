@@ -1,10 +1,13 @@
 # Generated outputs (temp chapter files, assembled protocols, docx exports)
 output/
 
-# Python virtual environment
+.claude/sessions/
+
+# uv / Python 缓存（不入库，克隆后自动重建）
 .venv/
 __pycache__/
 *.pyc
+.uv-cache/
 
 # OS files
 .DS_Store

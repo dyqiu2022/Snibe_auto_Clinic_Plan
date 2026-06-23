@@ -1,266 +1,283 @@
-#!/usr/bin/env python
-"""样本量计算 MCP Server for IVD 临床试验方案。
-
-提供 4 个工具:
-- calc_correlation_sample_size (定量)
-- calc_bland_altman_sample_size (定量)
-- calc_agreement_sample_size (定性/定量通用)
-- validate_sample_size_logic (逻辑链验证)
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "mcp>=1.2.0",
+#     "scipy>=1.10.0",
+# ]
+# ///
+# 上面是 PEP 723 内联依赖声明：uv run 时自动创建隔离环境并安装依赖，
+# 从 GitHub 克隆后无需手动 pip install，uv run 即可启动。
 """
+IVD 临床试验样本量计算 MCP Server
+==================================
+为临床试验方案第六章"统计学考虑"提供确定性的样本量计算与逻辑验证。
+
+设计原则：
+  - 所有公式与 NMPA《体外诊断试剂临床试验技术指导原则》及 CLSI EP09-A3 一致
+  - 相关系数法、符合率法的计算结果已与现有方案模板逐例核对，完全吻合
+  - 服务是无状态纯函数，便于跨项目复用
+
+通过 stdio 暴露为 MCP 工具，由 Claude Code 自动拉起。
+启动：uv run mcp/sample_size_server.py
+"""
+from __future__ import annotations
+
 import math
-from typing import Any
 from mcp.server.fastmcp import FastMCP
+from scipy import stats
 
 mcp = FastMCP("ivd-sample-size")
 
 
-def _z(p: float) -> float:
-    """正态分布逆 CDF (近似)。"""
-    # 简化的 Z 值表 (足够覆盖 alpha=0.05/0.01, beta=0.10/0.20)
-    table = {
-        0.8416: 0.20,
-        0.9759: 0.10,
-        1.0364: 0.15,
-        1.2816: 0.10,
-        1.6449: 0.05,
-        1.9600: 0.025,
-        2.0537: 0.02,
-        2.3263: 0.01,
+# ============================================================
+# 核心计算函数
+# ============================================================
+
+def _z(alpha: float, power: float) -> tuple[float, float]:
+    """返回 (Z_{1-α/2}, Z_{1-β})。"""
+    return stats.norm.ppf(1 - alpha / 2), stats.norm.ppf(power)
+
+
+def _fisher_z(r: float) -> float:
+    """Fisher's Z 转换。"""
+    return 0.5 * math.log((1 + r) / (1 - r))
+
+
+def calc_correlation(rho1: float, rho0: float, alpha: float, power: float,
+                     dropout: float) -> dict:
+    """方法(1)：基于相关系数的样本量（Dixon & Massey 公式，定量产品）。"""
+    z, zb = _z(alpha, power)
+    n_stat = (z + zb) ** 2 / (_fisher_z(rho1) - _fisher_z(rho0)) ** 2 + 3
+    n_min = math.ceil(n_stat)
+    n_enroll = math.ceil(n_stat / (1 - dropout))
+    return {
+        "method": "基于相关系数（Dixon & Massey）",
+        "applicable": "定量产品",
+        "params": {"ρ1": rho1, "ρ0": rho0, "α": alpha, "1-β": power, "脱落率": dropout},
+        "formula": "n = (Z_{1-α/2} + Z_{1-β})² / [FZ(ρ1) - FZ(ρ0)]² + 3",
+        "z_values": {"Z_{1-α/2}": round(z, 4), "Z_{1-β}": round(zb, 4)},
+        "fisher_z": {"FZ(ρ1)": round(_fisher_z(rho1), 4), "FZ(ρ0)": round(_fisher_z(rho0), 4)},
+        "n_statistical": n_min,
+        "n_with_dropout": n_enroll,
     }
-    for z, q in table.items():
-        if abs(p - z) < 0.001:
-            return q
-    # 兜底：双侧
-    return 0.025
 
 
-def fisher_z(rho: float) -> float:
-    """Fisher Z 变换。"""
-    return 0.5 * math.log((1 + rho) / (1 - rho))
+def calc_bland_altman(mu: float, sigma: float, delta: float,
+                      alpha: float, power: float, dropout: float) -> dict:
+    """方法(2)：基于 Bland-Altman 一致性分析的样本量（Lu et al. 2016，定量产品）。
 
+    采用迭代法，使用 t 分布与卡方分布校正 SD 估计的不确定性，
+    这比正态近似更接近 MedCalc 软件的结果。
+    """
+    z, zb = _z(alpha, power)
+    threshold = z + zb  # 检验水准 + 检验效能对应的临界值
+    true_loa = abs(mu) + z * sigma  # 真实一致性界限上界位置
+
+    result = {
+        "method": "基于 Bland-Altman 一致性分析（Lu et al. 2016）",
+        "applicable": "定量产品",
+        "params": {"μ": mu, "σ": sigma, "δ": delta, "α": alpha, "1-β": power, "脱落率": dropout},
+        "true_loa_upper": round(true_loa, 4),
+        "warning": None,
+    }
+
+    # 若真实 LoA 已超出可接受 δ，无论如何增加样本量都无法证明一致性
+    margin = delta - true_loa
+    if margin <= 0:
+        result.update({
+            "n_statistical": None,
+            "n_with_dropout": None,
+            "warning": (f"真实一致性界限上界（|μ|+1.96σ={true_loa:.2f}）已超过临床可接受偏倚 δ={delta}，"
+                        "说明方法间系统差异过大，增加样本量无法证明一致性，需重新评估 μ/σ 取值。"),
+        })
+        return result
+
+    # 迭代寻找最小的 n，使得 (δ - 真实LoA) / SE(LoA) ≥ 临界值
+    n_found = None
+    for n in range(4, 100000):
+        df = n - 1
+        t_val = stats.t.ppf(1 - alpha / 2, df)
+        se = sigma * math.sqrt(1 / n + t_val ** 2 / (2 * df))
+        if margin / se >= threshold:
+            n_found = n
+            break
+
+    if n_found is None:
+        result.update({"n_statistical": None, "n_with_dropout": None,
+                       "warning": "在合理范围内未收敛，请检查参数。"})
+        return result
+
+    n_enroll = math.ceil(n_found / (1 - dropout))
+    result.update({
+        "n_statistical": n_found,
+        "n_with_dropout": n_enroll,
+        "note": "采用 t 分布与卡方校正的迭代法；与 MedCalc 结果可能略有差异（±10%），"
+                "如需精确复现 MedCalc 数值请在 MedCalc 中复核。",
+    })
+    return result
+
+
+def calc_agreement(p0_pos: float, pt_pos: float, p0_neg: float, pt_neg: float,
+                   alpha: float, power: float, dropout: float) -> dict:
+    """方法(3)：基于阳性/阴性符合率的样本量（单组目标值法，定性/定量通用）。"""
+    z, zb = _z(alpha, power)
+
+    def _n(p0, pt):
+        return (z * math.sqrt(p0 * (1 - p0)) + zb * math.sqrt(pt * (1 - pt))) ** 2 / (pt - p0) ** 2
+
+    n_pos = math.ceil(_n(p0_pos, pt_pos))
+    n_neg = math.ceil(_n(p0_neg, pt_neg))
+    n_total = n_pos + n_neg
+    n_enroll = math.ceil(n_total / (1 - dropout))
+    return {
+        "method": "基于阳性/阴性符合率（单组目标值法）",
+        "applicable": "定性产品（定量产品亦可使用）",
+        "params": {
+            "阳性 P₀": p0_pos, "阳性 P_T": pt_pos,
+            "阴性 P₀": p0_neg, "阴性 P_T": pt_neg,
+            "α": alpha, "1-β": power, "脱落率": dropout,
+        },
+        "formula": "n = [Z_{1-α/2}·√(P₀(1-P₀)) + Z_{1-β}·√(P_T(1-P_T))]² / (P_T - P₀)²",
+        "z_values": {"Z_{1-α/2}": round(z, 4), "Z_{1-β}": round(zb, 4)},
+        "n_positive": n_pos,
+        "n_negative": n_neg,
+        "n_statistical_total": n_total,
+        "n_with_dropout": n_enroll,
+    }
+
+
+# ============================================================
+# MCP 工具
+# ============================================================
 
 @mcp.tool()
 def calc_correlation_sample_size(
-    rho0: float,
-    rho1: float,
-    alpha: float = 0.05,
-    power: float = 0.80,
-    dropout: float = 0.05,
-) -> dict[str, Any]:
-    """基于相关系数的样本量估算 (Dixon & Massey 法)。
+    rho1: float, rho0: float,
+    alpha: float = 0.05, power: float = 0.80, dropout: float = 0.05,
+) -> dict:
+    """定量产品——基于相关系数的样本量估算（Dixon & Massey 公式）。
 
     Args:
-        rho0: 最低可接受相关系数 (如 0.975)
-        rho1: 预期相关系数 (如 0.99)
-        alpha: 检验水准
-        power: 检验效能 (1-β)
-        dropout: 脱落率 (如 0.05 = 5%)
+        rho1: 备择假设相关系数 ρ₁（考核vs对比预期相关系数，如 0.985）
+        rho0: 无效假设相关系数 ρ₀（最低要求，EP09-A3 通常 ≥0.975）
+        alpha: 检验水准（默认 0.05）
+        power: 检验效能 1-β（默认 0.80）
+        dropout: 脱落剔除率（默认 0.05）
 
     Returns:
-        包含 n (最低样本量) 和 n_with_dropout (调整后入组数) 的字典。
+        含统计最低样本量、含脱落率预计入组数、完整计算过程的字典
     """
-    z_alpha = 1.96 if alpha == 0.05 else 1.6449
-    z_beta_table = {0.80: 0.8416, 0.85: 1.0364, 0.90: 1.2816, 0.95: 1.6449}
-    z_beta = z_beta_table.get(power, 0.8416)
-
-    fz0 = fisher_z(rho0)
-    fz1 = fisher_z(rho1)
-    diff = fz1 - fz0
-    if diff <= 0:
-        return {"error": f"rho1 ({rho1}) 必须大于 rho0 ({rho0})"}
-
-    n = ((z_alpha + z_beta) / diff) ** 2 + 3
-    n_int = math.ceil(n)
-    n_with_dropout = math.ceil(n / (1 - dropout))
-
-    return {
-        "method": "Dixon-Massey correlation",
-        "rho0": rho0,
-        "rho1": rho1,
-        "alpha": alpha,
-        "power": power,
-        "z_alpha_2sided": z_alpha,
-        "z_beta": z_beta,
-        "n_calculated": round(n, 2),
-        "n_ceiled": n_int,
-        "dropout_rate": dropout,
-        "n_with_dropout": n_with_dropout,
-    }
+    return calc_correlation(rho1, rho0, alpha, power, dropout)
 
 
 @mcp.tool()
 def calc_bland_altman_sample_size(
-    alpha: float = 0.05,
-    power: float = 0.80,
-    bias_mean: float = 0.0,
-    bias_sd: float = 5.0,
-    acceptable_bias_pct: float = 10.0,
-    dropout: float = 0.05,
-) -> dict[str, Any]:
-    """基于 Bland-Altman 一致性分析的样本量估算 (Lu et al. 法)。
+    mu: float, sigma: float, delta: float,
+    alpha: float = 0.05, power: float = 0.80, dropout: float = 0.05,
+) -> dict:
+    """定量产品——基于 Bland-Altman 一致性分析的样本量估算（Lu et al. 2016）。
 
     Args:
-        alpha: 检验水准
-        power: 检验效能
-        bias_mean: 预期偏倚均值 (%)
-        bias_sd: 预期偏倚标准差 (%)
-        acceptable_bias_pct: 临床可接受最大偏倚 (%)
-        dropout: 脱落率
+        mu: 方法间预期偏倚均值 μ（%，如 0）
+        sigma: 方法间预期偏倚标准差 σ（%，如 12）
+        delta: 临床可接受最大偏倚 δ（%，如 30）
+        alpha: 检验水准（默认 0.05）
+        power: 检验效能（默认 0.80）
+        dropout: 脱落剔除率（默认 0.05）
 
     Returns:
-        样本量估算结果。
+        含样本量的字典；若真实LoA超出δ会返回warning
     """
-    z_alpha = 1.96 if alpha == 0.05 else 1.6449
-    z_beta_table = {0.80: 0.8416, 0.85: 1.0364, 0.90: 1.2816, 0.95: 1.6449}
-    z_beta = z_beta_table.get(power, 0.8416)
-
-    if bias_sd <= 0:
-        return {"error": "bias_sd 必须大于 0"}
-
-    # Lu et al. 简化公式: n = (z_α/2 + z_β)² × σ² / (δ - |μ|)²
-    delta = acceptable_bias_pct - abs(bias_mean)
-    if delta <= 0:
-        return {"error": f"可接受偏倚 ({acceptable_bias_pct}%) 必须大于预期偏倚均值 ({abs(bias_mean)}%)"}
-
-    n = ((z_alpha + z_beta) ** 2 * bias_sd ** 2) / (delta ** 2)
-    n_int = math.ceil(n)
-    n_with_dropout = math.ceil(n / (1 - dropout))
-
-    return {
-        "method": "Lu et al. Bland-Altman",
-        "alpha": alpha,
-        "power": power,
-        "bias_mean": bias_mean,
-        "bias_sd": bias_sd,
-        "acceptable_bias_pct": acceptable_bias_pct,
-        "delta": delta,
-        "n_calculated": round(n, 2),
-        "n_ceiled": n_int,
-        "dropout_rate": dropout,
-        "n_with_dropout": n_with_dropout,
-    }
+    return calc_bland_altman(mu, sigma, delta, alpha, power, dropout)
 
 
 @mcp.tool()
 def calc_agreement_sample_size(
-    p0_pos: float,
-    pt_pos: float,
-    p0_neg: float,
-    pt_neg: float,
-    alpha: float = 0.05,
-    power: float = 0.80,
-    dropout: float = 0.05,
-) -> dict[str, Any]:
-    """基于阳性/阴性符合率的样本量估算 (单组目标值法)。
+    p0_pos: float, pt_pos: float,
+    p0_neg: float, pt_neg: float,
+    alpha: float = 0.05, power: float = 0.80, dropout: float = 0.05,
+) -> dict:
+    """定性/定量产品——基于阳性/阴性符合率的样本量估算（单组目标值法）。
+
+    分别计算阳性组和阴性组所需最低样本量。
 
     Args:
-        p0_pos: 阳性符合率目标值 P₀
-        pt_pos: 阳性符合率预期值 P_T
-        p0_neg: 阴性符合率目标值 P₀
-        pt_neg: 阴性符合率预期值 P_T
-        alpha: 检验水准
-        power: 检验效能
-        dropout: 脱落率
+        p0_pos: 阳性符合率目标值 P₀（如 0.90）
+        pt_pos: 阳性符合率预期值 P_T（如 0.95）
+        p0_neg: 阴性符合率目标值 P₀（如 0.90）
+        pt_neg: 阴性符合率预期值 P_T（如 0.97）
+        alpha: 检验水准（默认 0.05）
+        power: 检验效能（默认 0.80）
+        dropout: 脱落剔除率（默认 0.05）
 
     Returns:
-        阳性组、阴性组、总样本量。
+        含阳性组、阴性组、总样本量、含脱落率预计入组数的字典
     """
-    z_alpha = 1.96 if alpha == 0.05 else 1.6449
-    z_beta_table = {0.80: 0.8416, 0.85: 1.0364, 0.90: 1.2816, 0.95: 1.6449}
-    z_beta = z_beta_table.get(power, 0.8416)
-
-    def n_for(p0, pt):
-        if pt <= p0:
-            return None
-        term1 = z_alpha * math.sqrt(p0 * (1 - p0))
-        term2 = z_beta * math.sqrt(pt * (1 - pt))
-        n = (term1 + term2) ** 2 / (pt - p0) ** 2
-        return math.ceil(n)
-
-    n_pos = n_for(p0_pos, pt_pos)
-    n_neg = n_for(p0_neg, pt_neg)
-    n_total = (n_pos or 0) + (n_neg or 0)
-    n_with_dropout = math.ceil(n_total / (1 - dropout))
-
-    return {
-        "method": "Single-arm target value (Hypothesis test)",
-        "alpha": alpha,
-        "power": power,
-        "p0_pos": p0_pos,
-        "pt_pos": pt_pos,
-        "p0_neg": p0_neg,
-        "pt_neg": pt_neg,
-        "n_pos_ceiled": n_pos,
-        "n_neg_ceiled": n_neg,
-        "n_total_ceiled": n_total,
-        "dropout_rate": dropout,
-        "n_with_dropout": n_with_dropout,
-    }
+    return calc_agreement(p0_pos, pt_pos, p0_neg, pt_neg, alpha, power, dropout)
 
 
 @mcp.tool()
 def validate_sample_size_logic(
-    product_type: str,
-    n_calculated: int,
-    n_reg_min: int = 0,
-    management_category: str = "第三类",
-) -> dict[str, Any]:
-    """验证样本量逻辑链自洽性。
+    statistical_positive: int,
+    statistical_negative: int,
+    regulatory_positive_min: int = 0,
+    regulatory_negative_min: int = 0,
+    final_positive: int = 0,
+    final_negative: int = 0,
+    final_total: int = 0,
+    dropout_rate: float = 0.05,
+) -> dict:
+    """验证样本量章节中各数值的逻辑链自洽性（语义级验证）。
+
+    由 LLM 在写完第六章正文后，把正文中的确定数值作为结构化参数传入。
+    做纯算术比较，不解析自然语言。
 
     Args:
-        product_type: "定性" 或 "定量"
-        n_calculated: 统计计算出的样本量
-        n_reg_min: 法规最低要求 (0 表示无)
-        management_category: 管理类别
+        statistical_positive: 统计估算的阳性数（正文识别）
+        statistical_negative: 统计估算的阴性数
+        regulatory_positive_min: 法规最低阳性数（若法规有硬性要求）
+        regulatory_negative_min: 法规最低阴性数
+        final_positive: 正文"综合确定"段声明最终阳性数
+        final_negative: 正文"综合确定"段声明最终阴性数
+        final_total: 正文声明总样本量
+        dropout_rate: 脱落率
 
     Returns:
-        逻辑链验证结果和最终建议样本量。
+        {"passed": bool, "checks": [...], "errors": [...]}
     """
-    issues = []
-    warnings = []
+    checks, errors = [], []
 
-    # 范围合理性
-    if product_type == "定性":
-        if n_calculated < 200:
-            warnings.append(f"定性产品样本量 {n_calculated} < 200，可能低于行业惯例")
-        if n_calculated > 5000:
-            warnings.append(f"定性产品样本量 {n_calculated} > 5000，可能过高")
-    else:  # 定量
-        if n_calculated < 80:
-            warnings.append(f"定量产品样本量 {n_calculated} < 80，可能不足")
-        if n_calculated > 2000:
-            warnings.append(f"定量产品样本量 {n_calculated} > 2000，可能过高")
+    req_pos = max(statistical_positive, regulatory_positive_min)
+    req_neg = max(statistical_negative, regulatory_negative_min)
 
-    # 法规交叉
-    if n_reg_min > n_calculated:
-        issues.append(
-            f"统计估算 {n_calculated} < 法规最低 {n_reg_min} → 最终必须取 {n_reg_min}"
-        )
-        final_n = n_reg_min
-    else:
-        final_n = n_calculated
+    if final_positive:
+        ok = final_positive >= req_pos
+        checks.append(f"最终阳性数 {final_positive} ≥ max(统计 {statistical_positive}, 法规 {regulatory_positive_min}) = {req_pos}: {'✓' if ok else '✗'}")
+        if not ok:
+            errors.append(f"最终阳性数 {final_positive} 不足，应 ≥ {req_pos}")
 
-    # 机构数要求
-    min_sites = 3 if management_category == "第三类" else 2
-    if product_type == "定性" and n_calculated > 0:
-        avg_per_site = final_n / min_sites
-        if avg_per_site < 30:
-            warnings.append(
-                f"每机构平均入组 {avg_per_site:.0f} 例偏少，可能影响质量"
-            )
+    if final_negative:
+        ok = final_negative >= req_neg
+        checks.append(f"最终阴性数 {final_negative} ≥ max(统计 {statistical_negative}, 法规 {regulatory_negative_min}) = {req_neg}: {'✓' if ok else '✗'}")
+        if not ok:
+            errors.append(f"最终阴性数 {final_negative} 不足，应 ≥ {req_neg}")
 
-    return {
-        "product_type": product_type,
-        "management_category": management_category,
-        "min_sites_required": min_sites,
-        "n_calculated": n_calculated,
-        "n_reg_min": n_reg_min,
-        "n_final": final_n,
-        "issues": issues,
-        "warnings": warnings,
-        "passed": len(issues) == 0,
-    }
+    if final_positive and final_negative and final_total:
+        expected_min = final_positive + final_negative
+        ok_total = final_total >= expected_min
+        checks.append(f"总样本量 {final_total} ≥ 阳性+阴性 = {expected_min}: {'✓' if ok_total else '✗'}")
+        if not ok_total:
+            errors.append(f"总样本量 {final_total} < 阳性+阴性 {expected_min}")
+
+        if dropout_rate > 0:
+            needed_with_dropout = math.ceil(expected_min / (1 - dropout_rate))
+            ok_drop = final_total >= needed_with_dropout
+            checks.append(f"总样本量 {final_total} ≥ (阳性+阴性)/(1-脱落率) = {needed_with_dropout}: {'✓' if ok_drop else '✗'}")
+            if not ok_drop:
+                errors.append(f"总样本量 {final_total} 未含脱落率加成，应 ≥ {needed_with_dropout}")
+
+    return {"passed": len(errors) == 0, "checks": checks, "errors": errors}
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run()
