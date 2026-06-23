@@ -23,9 +23,11 @@ read_when:
 
 写入 `output/<name>/temp/00c_缩略语.md`。
 
-**表格格式要求：** 必须使用 HTML `<table>` 格式，不得使用 Markdown pipe table（`| ... |`）。导出脚本仅解析 HTML 表格，pipe table 不会被渲染为 Word 表格。
+**表格格式要求：** 使用 Markdown pipe table 格式（`| 缩略语 | 英文 | 中文 |`），不要使用 HTML `<table>`。导出脚本 v5 已支持解析 pipe table。
 
 示例格式：
-```html
-<table><tr><td><p>缩略语</p></td><td><p>英文全称</p></td><td><p>中文全称</p></td></tr><tr><td><p>IVD</p></td><td><p>In Vitro Diagnostic</p></td><td><p>体外诊断</p></td></tr></table>
+```markdown
+| 缩略语 | 英文全称 | 中文全称 |
+| --- | --- | --- |
+| IVD | In Vitro Diagnostic | 体外诊断 |
 ```

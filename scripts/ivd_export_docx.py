@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""IVD 临床试验方案 - Markdown 转 Word（v4）
+"""IVD 临床试验方案 - Markdown 转 Word（v5）
 修复记录：
 - v1: 基础转换
 - v2: HTML 表格解析、** 标记清理
 - v3: body_buffer 合并、colspan/rowspan、OMML 公式
 - v4: 标题宋体、_Toc 全局清理、首行缩进、BOM 过滤
+- v5: 支持 Markdown pipe table（`| 列1 | ... |`）解析
 """
 import sys, re
 from pathlib import Path
@@ -343,6 +344,27 @@ def parse_html_table(html_text):
     return rows
 
 
+def parse_pipe_table(lines, start_idx):
+    """从 Markdown pipe table 提取行数据。
+    返回 (rows, end_idx)，end_idx 是表最后一行之后的下标。"""
+    rows = []
+    i = start_idx
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line.startswith("|"):
+            break
+        # 跳过分隔行（|---|）
+        if re.match(r'^\|[\s\-:|]+\|$', line):
+            i += 1
+            continue
+        cells = [c.strip() for c in line.split("|")[1:-1]]
+        # 清理 <br> 等标签
+        cells = [re.sub(r'<[^>]+>', '', c) for c in cells]
+        rows.append(cells)
+        i += 1
+    return rows, i
+
+
 def convert(md_path, docx_path):
     Path(md_path).parent.mkdir(parents=True, exist_ok=True)
     md_str = Path(md_path).read_text(encoding="utf-8")
@@ -427,6 +449,15 @@ def convert(md_path, docx_path):
             if rows:
                 add_table_from_md(doc, rows)
             i += 1
+            prev_was_blank = True
+            continue
+
+        # Markdown pipe table — 以 | 开头的连续行
+        if line.strip().startswith("|") and "|" in line.strip()[1:]:
+            flush_body()
+            pipe_rows, i = parse_pipe_table(lines, i)
+            if pipe_rows:
+                add_table_from_md(doc, pipe_rows)
             prev_was_blank = True
             continue
 
