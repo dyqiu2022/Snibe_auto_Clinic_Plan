@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent 入门：Skills、MCP、规则检查 三大组件</title>
+<style>
+  :root {
+    --bg: #f8f7f4;
+    --card: #ffffff;
+    --text: #2c2c2a;
+    --muted: #888780;
+    --border: #e0ded8;
+    --accent: #378ADD;
+    --accent-bg: #E6F1FB;
+    --green: #1D9E75;
+    --green-bg: #E1F5EE;
+    --amber: #BA7517;
+    --amber-bg: #FAEEDA;
+    --purple: #7F77DD;
+    --purple-bg: #EEEDFE;
+    --red: #E24B4A;
+    --red-bg: #FCEBEB;
+    --code-bg: #f1efe8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.8;
+    font-size: 15px;
+  }
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 32px 80px;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+  h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid var(--border);
+  }
+  h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-top: 32px;
+    margin-bottom: 12px;
+  }
+  h4 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: 24px;
+    margin-bottom: 8px;
+  }
+  p { margin-bottom: 14px; }
+  blockquote {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    padding: 12px 18px;
+    margin: 16px 0;
+    border-radius: 0 8px 8px 0;
+    color: #444441;
+  }
+  blockquote p { margin-bottom: 6px; }
+  blockquote p:last-child { margin-bottom: 0; }
+  strong { font-weight: 600; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  }
+  pre {
+    background: #2c2c2a;
+    color: #e0ded8;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 14px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border: 1px solid var(--border);
+  }
+  th {
+    background: var(--code-bg);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td { vertical-align: top; }
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+  ul, ol { margin: 10px 0 14px 24px; }
+  li { margin-bottom: 4px; }
+  .subtitle {
+    color: var(--muted);
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+  /* Print */
+  @media print {
+    body { background: white; font-size: 12px; }
+    .container { max-width: 100%; padding: 0 24px; }
+    h2 { page-break-before: always; }
+    h2:first-of-type { page-break-before: avoid; }
+    pre, code { font-size: 10px; }
+    blockquote { background: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>如何搭建可靠、可复用的 AI Agent 工作流</h1>
+<blockquote>
+<p>Skills、MCP、规则检查 三大组件的实践指南</p>
+<p>面向已经了解 AI Agent 基本概念，想知道<strong>具体怎么搭一套生产级工作流</strong>的同事。</p>
+</blockquote>
+<hr />
+<h2>一、一个工作流的"可靠性"从哪来？</h2>
+<p>一个工作流能不能投产，看三件事：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>组件</th>
+<th>解决方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AI 不知道该怎么做</td>
+<td><strong>Skills</strong></td>
+<td>把方法写成操作手册</td>
+</tr>
+<tr>
+<td>AI 有些事做不好、做不到</td>
+<td><strong>MCP</strong></td>
+<td>接第三方工具</td>
+</tr>
+<tr>
+<td>AI 可能跳步或犯错</td>
+<td><strong>规则检查</strong></td>
+<td>设自动检查点</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>二、Skills——把"怎么做"写成文件</h2>
+<h3>2.1 核心思想</h3>
+<blockquote>
+<p><strong>不要每次教 AI 怎么做，把方法写成文件，让它自己读。</strong></p>
+<p>非常像我们平时给实习生写的 <strong>SOP（标准操作流程）</strong>，只不过 Skills 是写给 AI Agent 读的。</p>
+</blockquote>
+<p>Skills 就是一份 <code>.md</code> 文件，用自然语言写清楚：一个任务的目标、步骤、规则、输入输出。</p>
+<pre class="codehilite"><code>项目/.workbuddy/skills/
+├── 周报生成/
+│   └── SKILL.md
+├── 报销整理/
+│   └── SKILL.md
+├── 方案撰写工作流/
+│   ├── SKILL.md                  ← 主编排器
+│   ├── pre-提取说明书信息/
+│   │   └── SKILL.md
+│   └── ...更多子 Skill
+└── 合同审查/
+    └── SKILL.md
+</code></pre>
+
+<h3>2.2 一份好的 Skill 长什么样</h3>
+<p>拿项目中"提取说明书信息"这个 Skill 举例：</p>
+<pre class="codehilite"><code class="language-markdown">---
+title: &quot;提取说明书信息&quot;
+summary: &quot;从考核试剂说明书中提取结构化产品参数&quot;
+read_when:
+  - 主编排器调度&quot;提取说明书信息&quot;步骤
+  - 需要从 IFU 中提取产品参数时
+---
+
+## 输入
+- 考核试剂说明书（IFU），PDF 或图片格式均可
+
+## 处理步骤
+1. 读取说明书全文
+2. 逐一提取以下 23 项参数：
+   - 产品名称、预期用途、样本类型、检测靶标
+   - 方法学原理（定性/定量）、检测时间
+   - 灵敏度、特异度、符合率、PPV、NPV
+   - 保存条件、有效期、规格型号……
+3. 对每一项参数，标注&quot;从说明书第 X 页/节提取&quot;
+4. 提取不到的参数，标注&quot;IFU 未提供&quot;
+
+## 输出格式
+输出为 `产品信息提取.md`，表格形式：
+| 序号 | 参数名 | 参数值 | 来源 |
+|------|--------|--------|------|
+| 1 | 产品名称 | 七项呼吸道病原体核酸检测试剂盒 | IFU 封面 |
+
+## 规则（不可违反）
+- 所有参数值必须逐字引用原文，不允许改写
+- IFU 未提供的参数标注&quot;未提供&quot;，不允许编造
+- 输出文件必须保存到项目文件夹
+</code></pre>
+
+<h3>2.3 怎么写才可靠？有什么好处？</h3>
+<table>
+<thead>
+<tr>
+<th>原则</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>输入要明确</strong></td>
+<td>AI 需要什么材料？缺什么就报错</td>
+</tr>
+<tr>
+<td><strong>步骤要细</strong></td>
+<td>每个步骤可独立执行、可验证</td>
+</tr>
+<tr>
+<td><strong>规则写死</strong></td>
+<td>什么能做、什么不能做、边界条件</td>
+</tr>
+<tr>
+<td><strong>输出有标准</strong></td>
+<td>结果是文件？表格？通知？格式要求？</td>
+</tr>
+</tbody>
+</table>
+<p>写好之后，Skill 不绑定具体数据——换一批数据、换一个人、换一个项目，只要输入格式一样就能复用。</p>
+<h3>2.4 Skills 支持"套娃"（树状调用）</h3>
+<p>一个 Skill 可以调用另一个 Skill，形成树状结构：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>角色</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>根 Skill</strong></td>
+<td>主编排器，只管流程调度</td>
+<td>不干活，只安排谁干什么</td>
+</tr>
+<tr>
+<td><strong>树枝 Skill</strong></td>
+<td>负责一个子模块，可继续拆</td>
+<td>管一个阶段，内部再拆子任务</td>
+</tr>
+<tr>
+<td><strong>叶子 Skill</strong></td>
+<td>做一件具体的事，不再往下拆</td>
+<td>说明书信息提取、样本量计算</td>
+</tr>
+</tbody>
+</table>
+<p>规则：根 Skill 只调度不干活，叶子 Skill 只干活不调度。发现一个 Skill 里事情太多，就拆成多个。</p>
+<hr />
+<h2>三、MCP——给 AI 装上"专用工具"</h2>
+<h3>3.1 为什么要用 MCP？</h3>
+<p>AI 有大量事情做不好——不是它"不聪明"，而是它<strong>天生不适合</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>为什么 AI 自己做不行</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>算样本量、跑统计</td>
+<td>大模型本质是"猜下一个词"，不是算数</td>
+</tr>
+<tr>
+<td>读写 .docx/.xlsx/.pdf</td>
+<td>无法直接操作二进制文件</td>
+</tr>
+<tr>
+<td>查数据库、做实时检索</td>
+<td>模型知识有截止日期</td>
+</tr>
+<tr>
+<td>持久化记忆</td>
+<td>每次对话相互独立，没有长期记忆</td>
+</tr>
+<tr>
+<td>打开网页搜集信息</td>
+<td>不知道网页上现在有什么</td>
+</tr>
+<tr>
+<td>发企业微信/飞书/邮件</td>
+<td>没有系统权限</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>MCP = 通用协议，让 AI 调用第三方工具干这些事。凡是模型做不好的，别让模型硬做。</strong></p>
+</blockquote>
+<h3>3.2 MCP 怎么工作</h3>
+<p>不管什么类型的工具，调用模式都一样：</p>
+<pre class="codehilite"><code>AI 发现自己干不好某件事 → 通过 MCP 协议调用工具 → 工具执行 → 返回结果给 AI
+</code></pre>
+
+<p>整个过程<strong>对使用者透明</strong>——你只看到结果，不需要知道背后调了什么。</p>
+<h3>3.3 什么时候该加 MCP？</h3>
+<pre class="codehilite"><code>判断标准只有一条：这件事让 AI 自己硬做，你敢不敢验收？
+不敢 → 加 MCP
+敢   → 不用加
+</code></pre>
+
+<hr />
+<h2>四、规则检查——给工作流装"质检员"</h2>
+<blockquote>
+<p>规则检查 = 在关键节点设置条件，不满足就停。WorkBuddy 里的规则检查<strong>写在 SKILL.md 里</strong>，是 Skills 的一部分（自然语言，不需要代码）。Claude Code 里规则检查通过 hooks 实现（写脚本，系统强制触发）。两种实现方式，同一个目的。</p>
+<p>下面说的是<strong>规则检查这件事本身</strong>——怎么设计检查点、怎么写规则——不管用哪种工具来实现。</p>
+</blockquote>
+<h3>4.1 为什么需要规则检查</h3>
+<p>AI 工作流可能出这些问题：跳步（没做完第二步直接跳到第四步）、遗漏（忘了检查关键条款）、编数据（找不到数据时自己造一个）。规则检查就是在关键节点设条件，不满足就停。</p>
+<h3>4.2 检查规则的三种形态</h3>
+<table>
+<thead>
+<tr>
+<th>形态</th>
+<th>时机</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>前置检查</strong></td>
+<td>执行前</td>
+<td>"Phase 3 没完成 → 不能进 Phase 4"</td>
+</tr>
+<tr>
+<td><strong>后置验证</strong></td>
+<td>执行后</td>
+<td>"输出文件有占位符残留 → 修复"</td>
+</tr>
+<tr>
+<td><strong>约束守卫</strong></td>
+<td>全流程</td>
+<td>"定性产品不能写定量指标 → 禁止"</td>
+</tr>
+</tbody>
+</table>
+<h3>4.3 怎么写检查规则</h3>
+<p>直接在 SKILL.md 里写自然语言，不需要代码：</p>
+<pre class="codehilite"><code class="language-markdown">## 全局硬约束（违反任一，流程停止）
+1. 启动新章节前，确认前一步已标记 ✅
+2. 所有引用数据必须标注来源
+3. 输出文件不能包含原始模板占位符
+</code></pre>
+
+<p>规则要<strong>可验证</strong>（别写"检查数据质量"，写"缺失值比例 &lt; 5%？"）、<strong>有事可做</strong>（别只报错，写"发现占位符 → 尝试修复 → 修不了再报错"）。</p>
+<hr />
+<h2>五、三步搭建一个工作流</h2>
+<pre class="codehilite"><code>Step 1: 梳理流程 → 拆成&quot;输入 → 处理 → 输出&quot;
+Step 2: 写 Skill  → 一个流程 = 一个目录 = 一个 SKILL.md
+Step 3: 加 MCP 和规则检查
+        AI 做不好或做不到的  → 加 MCP
+        不能出错的             → 加规则检查
+</code></pre>
+
+<blockquote>
+<p>举个具体例子：按这个三步法设计临床试验方案工作流</p>
+<p>Step 1 理清流程：读材料提取参数 → 分步写 23 个章节 → 拼装验证 → 导出 Word
+Step 2 写 Skills：主编排器 + 5 个提取器 + 23 个章节 Skill + 独立验证 Agent
+Step 3 加 MCP（样本量计算、文件读写）+ 规则检查（定性产品禁写定量术语、约束清单前置确认、全案完整性检查）</p>
+</blockquote>
+<p>搭完之后，每次把材料扔进文件夹，说一句"开始写方案"，AI 自动走完全流程。你只管验收最终 Word。</p>
+<hr />
+<h2>六、参考案例：如果让你来设计这个工作流，你会怎么做？</h2>
+<blockquote>
+<p>以下案例面向<strong>从事临床试验方案撰写的同事</strong>，用大家熟悉的场景演示<strong>如何从零设计</strong>一套 Skills + MCP + 规则检查 工作流。</p>
+<p>如果你不是这个领域的，可以直接跳到<strong>第七节总结</strong>，不影响理解。</p>
+</blockquote>
+<p>前面的五步法（梳理流程→写 Skill→加 MCP 和规则检查）是通用的。这一节我们走一遍<strong>真实的设计决策过程</strong>——不是教你怎么用这个工作流，而是教你怎么把它设计出来。</p>
+<p><strong>场景</strong>：你的任务是设计一个工作流，让 AI 能自动写出一份 IVD 临床试验方案（23 个章节、25 条法规约束、含样本量计算、最终出 Word）。</p>
+<p>你会怎么设计？</p>
+<hr />
+<h3>第一步：拆业务——先别想 AI，先理清人的流程</h3>
+<p>任何工作流设计，第一步都不是写代码或写 Skill，而是<strong>把你脑子里的业务逻辑搬到纸面上</strong>。</p>
+<p>临床试验方案撰写这个任务，人是怎么做的？</p>
+<pre class="codehilite"><code>输入：考核试剂说明书 + 对比试剂说明书 + 指导原则文件
+  ↓
+1. 先读材料 → 提取关键信息（产品参数、法规要求）
+  ↓
+2. 写各个章节（背景、设计、统计……）
+    注意：有些章节可以同时写，有些必须等前面的写完
+  ↓
+3. 检查有没有写错（格式对不对、法规落实了没）
+  ↓
+4. 导出 Word
+</code></pre>
+
+<p>把这个流程画成图，你就知道了哪些步骤可以<strong>并行</strong>、哪些必须<strong>串行</strong>、哪些环节容易<strong>出错</strong>。</p>
+<blockquote>
+<p><strong>这是最关键的一步。这一步理清楚了，后面写 Skill、加 MCP、设检查规则都是填空式的。</strong></p>
+</blockquote>
+<hr />
+<h3>第二步：搭骨架——设计 Skill 树</h3>
+<p>流程理清楚后，你要决定：<strong>哪些步骤写成独立的 Skill？谁来调度？</strong></p>
+<p>你的决策逻辑应该是：</p>
+<table>
+<thead>
+<tr>
+<th>你的判断</th>
+<th>设计决策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>这个工作流有明确的阶段划分（预检→写作→验证→导出）</td>
+<td>需要一个<strong>主编排器 Skill</strong>，只负责调度，不负责具体干活</td>
+</tr>
+<tr>
+<td>提取材料这件事有 5 种不同的材料要处理</td>
+<td>每种材料写一个<strong>独立的提取器 Skill</strong>，让主编排器调用它们</td>
+</tr>
+<tr>
+<td>有 23 个章节要写</td>
+<td>每个章节写一个<strong>独立的章节 Skill</strong>，但一些简单的（封面、伦理、职责）可以合起来</td>
+</tr>
+<tr>
+<td>验证需要"自己查 + 别人查"两轮</td>
+<td>写一个<strong>验证子 Agent Skill</strong>，独立于写作流程</td>
+</tr>
+</tbody>
+</table>
+<p>这样设计出来的 Skill 树长这样：</p>
+<pre class="codehilite"><code>.workbuddy/skills/方案撰写工作流/
+├── SKILL.md                      ← 主编排器（只调度，不干活）
+├── pre-提取说明书信息/
+│   └── SKILL.md
+├── pre-提取指导原则约束/
+│   └── SKILL.md
+├── pre-提取专家共识/
+│   └── SKILL.md
+├── ch-03-背景资料/
+│   └── SKILL.md
+├── ch-05-试验设计/
+│   └── SKILL.md
+├── ch-06-统计学/
+│   └── SKILL.md
+├── ...其他章节/
+└── v-验证/
+    └── SKILL.md                  ← 独立验证子 Agent
+</code></pre>
+
+<p><strong>主编排器 Skill 大概长什么样？</strong></p>
+<p>它几乎不写具体内容，只写流程：</p>
+<pre class="codehilite"><code class="language-markdown">## 工作流步骤
+
+1. 检查项目文件夹中是否有以下材料：
+   - 考核试剂说明书（IFU）
+   - 对比试剂说明书
+   - 指导原则文件？
+   缺材料 → 报错，不继续
+
+2. **并行执行**以下提取任务：
+   - 调用 &quot;pre-提取说明书信息&quot; Skill
+   - 调用 &quot;pre-提取指导原则约束&quot; Skill
+   - 调用 &quot;pre-提取专家共识&quot; Skill（有文件就做，没有就跳过）
+
+3. 提取完成后，整理约束分发清单
+
+4. 开始写作（串行+并行，见各章节依赖关系）
+
+5. 执行验证
+
+6. 询问用户是否导出 Word
+</code></pre>
+
+<blockquote>
+<p><strong>设计的核心原则：主编排器只做调度决策，不做具体工作。具体工作由叶子 Skill 负责。</strong></p>
+</blockquote>
+<hr />
+<h3>第三步：装工具——判断哪些事 AI 做不好</h3>
+<p>Skill 树搭好后，看每个具体步骤：AI 自己做靠谱吗？不靠谱就加 MCP。</p>
+<p>按 Section 三那句判断标准走：<strong>你敢不敢验收 AI 硬做的结果？不敢就加。</strong></p>
+<p>在这个案例里，需要 MCP 的环节：</p>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>AI 为什么做不好</th>
+<th>加什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>算样本量</td>
+<td>大模型不擅长精确数学</td>
+<td>样本量计算 Python 脚本</td>
+</tr>
+<tr>
+<td>读写 .docx</td>
+<td>无法直接操作二进制文件</td>
+<td>文件处理脚本</td>
+</tr>
+<tr>
+<td>发审批通知</td>
+<td>AI 没有系统权限</td>
+<td>企业微信/飞书接口</td>
+</tr>
+<tr>
+<td>查实时入组数据</td>
+<td>知识有截止日期</td>
+<td>数据库查询接口</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3>第四步：设关卡——哪些环节不能出错？</h3>
+<p>工作流能跑了，但 AI 可能会跳步、遗漏、或写出违规内容。这不是"态度问题"，是大模型固有缺陷。</p>
+<p>你的决策逻辑：<strong>这个环节出了错，后果严重吗？严重就加检查规则。</strong> 规则写在相应 SKILL.md 里，自然语言即可：</p>
+<table>
+<thead>
+<tr>
+<th>检查时机</th>
+<th>检查什么</th>
+<th>在 SKILL.md 里这样写</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第三章启动前</td>
+<td>约束分发清单生成了吗？</td>
+<td>前置条件：确认 XX 文件已生成 ✅，未生成停下来</td>
+</tr>
+<tr>
+<td>第五章写完后</td>
+<td>定性产品有没有写定量方法？</td>
+<td>后置验证：检索"Bland-Altman""ROC"等词，违规就删</td>
+</tr>
+<tr>
+<td>全方案拼装后</td>
+<td>章节齐全吗？产品名统一吗？数值自洽吗？</td>
+<td>完整性 / 一致性 / 数值校验</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>检查规则阻断后：AI 立刻停下来 → 定位违规内容 → 修复 → 重新检查 → 通过才继续。</p>
+</blockquote>
+<hr />
+<h3>第五步：加保险——设计独立验证</h3>
+<p>第四步的检查全部是"AI 自己查自己"。自己查自己，查不出自己想不到的问题。所以加一层：<strong>设计一个没参与写作的独立子 Agent，拿着 25 条法规约束逐条复核。</strong> 有没落实的，打回去让主 Agent 修改。</p>
+<p>就像你写完方案，再交给一个没参与的同事复核——他能发现你的盲点。</p>
+<hr />
+<h3>第六步：交出去</h3>
+<p>设计完成后，把整套东西交给使用者。他只需要说一句"开始写方案"，剩下的全自动。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>你的投入</td>
+<td>写 30 个 SKILL.md + 1 个 MCP 脚本</td>
+</tr>
+<tr>
+<td>使用者的操作</td>
+<td>一句话</td>
+</tr>
+<tr>
+<td>每次复用成本</td>
+<td>0（换材料即可）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>七、对比：Skills vs MCP vs 规则检查</h2>
+<blockquote>
+<p>三个组件各自解决什么问题？有什么区别？到底该用哪一个？</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Skills（含规则检查）</th>
+<th>MCP</th>
+<th>规则检查（Claude Code 用 hooks）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>一句话定位</strong></td>
+<td>告诉 AI"怎么做"，顺带自检</td>
+<td>给 AI"做不好、做不到"的能力</td>
+<td>系统强制检查，不经过 AI</td>
+</tr>
+<tr>
+<td><strong>本质是什么</strong></td>
+<td>一份 .md 操作手册，里面可以写规则段落</td>
+<td>一个外部工具接口（Python 脚本）</td>
+<td>配置文件里的事件触发器</td>
+</tr>
+<tr>
+<td><strong>要写代码吗</strong></td>
+<td>不需要，自然语言就行</td>
+<td>需要，写 Python 脚本</td>
+<td>需要，写 Shell/Python 脚本</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>WorkBuddy：规则检查是 Skills 的一部分（写在 SKILL.md 里的自然语言段落）。Claude Code：规则检查通过 hooks 实现（系统触发脚本，100% 强制执行）。概念统一，实现不同。</p>
+</blockquote>
+<h3>什么时候该用哪个？</h3>
+<pre class="codehilite"><code>干活的方法不明确           → 写 Skill
+AI 自己做不靠谱、做不到    → 加 MCP（文件读写 / 精确计算 / 查数据库 / 发通知……任何 AI 做不好的事）
+流程不可跳过或质量需保证    → 加规则检查
+三者组合 = Skills 写流程 + MCP 给能力 + 规则检查保质量
+</code></pre>
+
+<h2>八、总结</h2>
+<pre class="codehilite"><code>可复用的工作流 = Skills（方法） + MCP（工具） + 规则检查（质检）
+
+做一次，用十次。
+</code></pre>
+</div>
+</body>
+</html>

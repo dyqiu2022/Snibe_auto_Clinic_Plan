@@ -1,0 +1,14 @@
+# Generated outputs (temp chapter files, assembled protocols, docx exports)
+output/
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Memory/logs are local only
+.workbuddy/memory/
